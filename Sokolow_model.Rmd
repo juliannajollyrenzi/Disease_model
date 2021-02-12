@@ -1,0 +1,190 @@
+---
+title: "Sokolow et al. SI Model"
+author: "Julianna Renzi"
+date: "2/12/2021"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    theme: cerulean
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(here)
+```
+
+# The model
+
+Three core differential equations:
+
+\begin{align}
+\frac{d S}{dt} &= m (S + I) (1 - S - I) - e_s S - \nu W S \\
+\newline
+\frac{d I}{dt} &= \nu W S - e_i I
+\newline
+\newline
+\frac{d W}{dt} &= \lambda I + f(W)
+\newline
+\end{align}
+
+Where $f(W) = -d_w W$ : 
+
+\begin{align}
+\frac{d I}{dt} &= \frac{\nu \lambda}{d_w} I (C - I) - e_i I \\
+\newline
+\frac{d C}{dt} &= m C (1 - C) - e_s C + e_s I - e_i I
+\end{align}
+
+
+**Where variables are (quoted from Sokolow et al.):**
+
+- $W$ = free-living pathogen population
+- $S$ = susceptible coral patches (fraction out of a constant total number of patches in the network [susceptible + infected + empty])
+- $I$ = infected coral patches (fraction out of a constant total number of patches in the network [susceptible + infected + empty])
+- $C$ = colonized coral patches (fraction), where $C = S + I$
+
+**Where parameters are (quoted from Table 1 and Table S1.1, Sokolow et al.):**
+
+- $m$ = **colonization/connectivity term** encompassing coral fecundity within a patch (propagule generation) as well as propagule dispersal, settlement, and post-settlement survival. Set at 0.0002, which is equivalent to one complete colonization every ~15 years on average, which they think is reasonable plus or minus one order of magnitude depending on the species involved (Connell, Hughes, and Wallace, 1997 found that on average there was 17 years between periods of low and high coral recruitment after disturbance, corresponding to the presumed period required to return the habitat to its former favorable conditions)
+- $e_s$ = **local extinction rates of susceptible (healthy) coral patches.** Set a 0.00001, which is equivalent to one extinction event in one healthy patch every ~300 years on average. The actual value is unknown but at equilibrium it's though that most available patches will be colonized by coral and will persist; this value allows an equilibrium saturation at ~95% of patches
+- $e_i$ = **local extinction rates of infected coral patches** (it's assumed that $e_s$ < $e_i$). Set at 0.0005, which is equivalent to one extinction event (one diseases patch goes extinct) every ~5 years on average. $e_i$ likely changes significantly with disease. White plagues type II has a high lesion expansion rate, is though to be locally contagious, and is commonly lethal to host colonies within days to weeks so it is plausible that local patches of reef containing 10-1000 individuals could be driven to local extinction within several years
+- $\nu$ = **transmission efficiency term** that represents the probability that a free-living pathogen will invade when it comes into contact with a susceptible patch of coral hosts, causing a local disease outbreak within a patch. Transmission probability is set at 0.00001, which is thought to reflect the low $\nu$ in the environment (due to strong coral immunological defense, large travel distances, etc.), although it is very difficult to measure directly. Note that the **force of infection** is calculated as $e^{- \nu W}$
+- $\lambda$ = **rate at which infected hosts shed pathogens** into the environment or free-living pool. Set at 100, which is equivalent to an infected patch giving out ~100 viable infectious particles that could go out and infect new patches. This value was arbitrarily chosen, but biologically plausible as it encompasses multiplication rates of pathogen particles within a host and release of infectious particles upon host mortality or partial mortality
+- $f(W)$ = **function governing the population dynamics of the free living pathogens** (in the simplest case explored, free-living particles undergo exponential decay where $f(W) = -d_w W$ with $\frac{1}{d_w}$ equal to average time that an infectious particle exists in the living environment). This simple case was also described analytically by a mathematical stability analysis
+- $d_w$ = **average lifespan of an infectious particle** ($d_w$ = 0.01 = ~100 days; informed by (Anderson & May, 1981))
+
+
+![Figure 2 from Sokolow et al.: Schematic of the numerical model showing state variables and parameters](sokolow_et_al_figure2.jpg)
+
+# Initial simulations
+
+1. Set parameters and initial conditions 
+
+```{r, message = FALSE, warning = FALSE}
+# parameters
+m <- 0.0002 # colonization term; varied from 0.00008 to 0.002
+e_i <- 0.0005 # local extinction rates of infected coral patches; varied from 0.0001 to 0.005
+e_s <- 0.00001 # local extinction rates of susceptible patches
+d_w <- 0.01 # average lifespan of an infectious particle (100 days)
+nu <- 0.00001 # transmission efficiency (i.e. pathogen will cause disease)
+lambda <- 100 # rate at which hosts shed pathogens into the environment
+H <- 5000 # total number of patches in the metapopulation
+
+# Initial conditions
+C0 <-  0.90 # initial percent colonized patches
+S0 <-  0.90 # initial percent susceptible patches
+I0 <- 0.0 # initial fraction of infected patches
+W0 <- 100 # initial number of free living infectious particles
+
+```
+
+2. Create holding and time vectors with initial conditions
+
+```{r}
+tset <- seq(from = 0, to = 50*365, by = 1) # ~50 years
+S.simu1 <- NaN*tset
+  S.simu1[1] <- S0
+I.simu1 <- NaN*tset
+  I.simu1[1] <- I0
+W.simu1 <- NaN*tset
+  W.simu1[1] <- W0
+C.simu1 <- NaN*tset
+  C.simu1[1] <- C0
+  
+```
+
+3. Create sub-functions
+
+```{r}
+# determines force of infection
+force <- function(nu, W) {
+  return(1 - exp(-nu*W))
+}
+
+# creates demographic stochasticity for coral patches (that are fractions)
+newfraction <- function(x) {
+  n <- rpois(n = 1, lambda = H*x) # H is the total number of patches in the metapopulation (set to 5,000 for their simulations)
+  # this takes a single (n=1) random draw from a poisson distribution with a mean and variance lambda (the fraction of patches occupied at the previous step)
+  new_x <- min(n/H, 1)
+  ifelse(n < 3, 
+         return(new_x),
+                return(x)) # when the population is small (fewer than three patches)
+}
+  
+# stochasticity for the pathogen for when it has fewer than three pathogen particles
+new <- function(new_W) {
+  ifelse(new_W < 3,
+         return(rpois(n = 1, lambda = new_W)), 
+                return(new_W))
+}
+
+```
+
+
+4. Simulate the model
+
+```{r}
+for(i in 2:length(tset)){
+  # calculate the change in time
+  dt <- tset[i] - tset[i-1]
+  
+  # store temporary variables
+  S <- S.simu1[i-1]
+  I <- I.simu1[i-1]
+  W <- W.simu1[i-1]
+  C <- C.simu1[i-1]
+  
+  # calculate change in state variables
+  dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )
+  dI <- ( nu*W*S - (e_s*I) )
+  dW <- ( lambda*I - (d_w*W) )
+  dC <- (dS + dI)
+  
+  # calculate add change to previous time step
+  # and store in the holding vector
+  S.simu1[i] <- newfraction(S.simu1[i-1] + dS)
+  I.simu1[i] <- newfraction(I.simu1[i-1] + dI)
+  W.simu1[i] <- new(W.simu1[i-1] + dW)
+  C.simu1[i] <- C.simu1[i-1] + (S.simu1[i]-S.simu1[i-1]) + (I.simu1[i]-I.simu1[i-1]) # I made this up--I think it should be the previous C plus the change in S and the change in I
+  
+}
+```
+
+4. Plot results as a time series
+
+```{r}
+# store colors for consistency
+Scol <- "#40d3bb"
+Icol <- "#b64709"
+Ccol <- "#fcd300"
+Wcol <- "#3d7dc5"
+
+```
+
+```{r}
+# plot fraction susceptible against time (tset) for the first 12 years (to match figure 6)
+plot(x = tset[1:4380], y = S.simu1[1:4380],
+     type = 'l', las = 1, lwd = 2, col = Scol,
+     xlab = 'Time', ylab = 'Fraction of coral patches',
+     ylim = c(0, 1))
+
+# plot fraction infected against time (tset)
+lines(x = tset[1:4380], y = I.simu1[1:4380],
+      lwd = 2, col = Icol)
+
+# plot fraction of patches colonized against time (tset)
+lines(x = tset[1:4380], y = C.simu1[1:4380],
+      lwd = 2, col = Ccol)
+
+# add a legend
+legend(x = 1000, y = 0.9, 
+       lwd = 2,
+       legend = c('Susceptible', 'Infected', 'Colonized'),
+       col = c(Scol, Icol, Ccol))
+```
+
+
