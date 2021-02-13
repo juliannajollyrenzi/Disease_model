@@ -85,7 +85,7 @@ W0 <- 100 # initial number of free living infectious particles
 2. Create holding and time vectors with initial conditions
 
 ```{r}
-tset <- seq(from = 0, to = 50*365, by = 1) # ~50 years
+tset <- seq(from = 0, to = 20*365, by = 1) # ~20 years
 S.simu1 <- NaN*tset
   S.simu1[1] <- S0
 I.simu1 <- NaN*tset
@@ -128,6 +128,11 @@ new <- function(new_W) {
 4. Simulate the model
 
 ```{r}
+
+#n u <- 0.000001299999 # 0.000001299998 overshoots--this value is as close without going over
+
+# nu <- 0.000140 # 0.000141 breaks it
+
 for(i in 2:length(tset)){
   # calculate the change in time
   dt <- tset[i] - tset[i-1]
@@ -200,8 +205,8 @@ We'd expect this to increase with temperature or coralliovre interactions.
 ### How I'd run it if I hadn't seen their code:
 
 ```{r}
-# create range of nu values to plot over
-Nuset <- seq(from = 0.0000001, to = 0.999999,length.out = 100)
+# create range of nu values to plot over (0.000001299999 picked as the first point at which corals begin getting infected)
+Nuset <- seq(from = 0.000001299999, to = 0.000140,length.out = 50)
 
 # make sure parameters are still correct
 m <- 0.0002 
@@ -211,14 +216,11 @@ d_w <- 0.01
 lambda <- 100 
 H <- 5000 
 
-# we'll do this over a shorter time 
-tset <- seq(from = 0, to = 20*365, by = 1) # ~20 years
-
 # create storage vectors
-Sstarset <- NaN*Nuset
-Istarset <- NaN*Nuset
-Wstarset <- NaN*Nuset
-Cstarset <- NaN*Nuset
+Sstarset1 <- NaN*Nuset
+Istarset1 <- NaN*Nuset
+Wstarset1 <- NaN*Nuset
+Cstarset1 <- NaN*Nuset
 
 
 # get equilibrium values
@@ -264,10 +266,10 @@ for(j in 1:length(Nuset)){
 	}
 	
 	# storing last population size (equilibrium population size) in holding vector
-	Sstarset[j] <- S.simu[length(tset)]
-	Istarset[j] <- I.simu[length(tset)]
-	Wstarset[j] <- W.simu[length(tset)]
-	Cstarset[j] <- C.simu[length(tset)]
+	Sstarset1[j] <- S.simu[length(tset)]
+	Istarset1[j] <- I.simu[length(tset)]
+	Wstarset1[j] <- W.simu[length(tset)]
+	Cstarset1[j] <- C.simu[length(tset)]
 	
 	# print progress
 	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
@@ -275,16 +277,16 @@ for(j in 1:length(Nuset)){
 
 ```
 
-The plots don't look like anything because after the inital value all the values are NA's (e.g. Istarset is: `r head(Istarset)`). 
+The plots are now showing up (yay!) but the plot of I* looks backwards to how it should be..
 
 ```{r}
 # plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
-plot(x = Nuset, y = Istarset,
+plot(x = Nuset, y = Istarset1,
      type = 'l', lwd = 2, col = Icol, las = 1,
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
 
 # plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
-plot(x = Nuset, y = Sstarset,
+plot(x = Nuset, y = Sstarset1,
      type = 'l', lwd = 2, col = Scol, las = 1, 
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
 ```
@@ -302,9 +304,6 @@ In their code they made some changes that I didn't see explained fully in their 
 4. They have a conditional statement that says if the number of colonized patches, $C$ or $S + I$, is greater than 1, the $S = 1 - I$, which is confusing. How could there be more than 100% of patches colonized and why would that mean that the fraction of susceptible patches is now $1 - I$?
 
 ```{r}
-# create range of nu values to plot over
-Nuset <- seq(from = 0.0000001, to = 0.999999,length.out = 100)
-
 # make sure parameters are still correct
 m <- 0.0002 
 e_i <- 0.0005 
@@ -317,10 +316,10 @@ H <- 5000
 tset <- seq(from = 0, to = 20*365, by = 1) # ~20 years
 
 # create storage vectors
-Sstarset <- NaN*Nuset
-Istarset <- NaN*Nuset
-Wstarset <- NaN*Nuset
-Cstarset <- NaN*Nuset
+Sstarset2 <- NaN*Nuset
+Istarset2 <- NaN*Nuset
+Wstarset2 <- NaN*Nuset
+Cstarset2 <- NaN*Nuset
 
 
 # get equilibrium values
@@ -369,10 +368,10 @@ for(j in 1:length(Nuset)){
 	}
 	
 	# storing last population size (equilibrium population size) in holding vector
-	Sstarset[j] <- S.simu[length(tset)]
-	Istarset[j] <- I.simu[length(tset)]
-	Wstarset[j] <- W.simu[length(tset)]
-	Cstarset[j] <- C.simu[length(tset)]
+	Sstarset2[j] <- S.simu[length(tset)]
+	Istarset2[j] <- I.simu[length(tset)]
+	Wstarset2[j] <- W.simu[length(tset)]
+	Cstarset2[j] <- C.simu[length(tset)]
 	
 	# print progress
 	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
@@ -384,24 +383,21 @@ Plot it
 
 ```{r}
 # plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
-plot(x = Nuset, y = Istarset,
+plot(x = Nuset, y = Istarset2,
      type = 'l', lwd = 2, col = Icol, las = 1,
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
 
 # plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
-plot(x = Nuset, y = Sstarset,
+plot(x = Nuset, y = Sstarset2,
      type = 'l', lwd = 2, col = Scol, las = 1, 
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
 ```
 
-I'm not sure I understand these plots--why is I* so low (peaks at 7%?) and why does S* have no stochasticity like I*?
+I'm not sure I understand these plots--why is I* so different than the 3-core-equation simulation and why does S* have no stochasticity like I*?
 
 ### Run it with just one change (demographic stochasticity)
 
 ```{r}
-# create range of nu values to plot over
-Nuset <- seq(from = 0.0000001, to = 0.999999,length.out = 100)
-
 # make sure parameters are still correct
 m <- 0.0002 
 e_i <- 0.0005 
@@ -414,10 +410,10 @@ H <- 5000
 tset <- seq(from = 0, to = 20*365, by = 1) # ~20 years
 
 # create storage vectors
-Sstarset <- NaN*Nuset
-Istarset <- NaN*Nuset
-Wstarset <- NaN*Nuset
-Cstarset <- NaN*Nuset
+Sstarset3 <- NaN*Nuset
+Istarset3 <- NaN*Nuset
+Wstarset3 <- NaN*Nuset
+Cstarset3 <- NaN*Nuset
 
 
 # get equilibrium values
@@ -466,10 +462,10 @@ for(j in 1:length(Nuset)){
 	}
 	
 	# storing last population size (equilibrium population size) in holding vector
-	Sstarset[j] <- S.simu[length(tset)]
-	Istarset[j] <- I.simu[length(tset)]
-	Wstarset[j] <- W.simu[length(tset)]
-	Cstarset[j] <- C.simu[length(tset)]
+	Sstarset3[j] <- S.simu[length(tset)]
+	Istarset3[j] <- I.simu[length(tset)]
+	Wstarset3[j] <- W.simu[length(tset)]
+	Cstarset3[j] <- C.simu[length(tset)]
 	
 	# print progress
 	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
@@ -477,16 +473,16 @@ for(j in 1:length(Nuset)){
 
 ```
 
-Plot it: Get `NA` values again
+Plot it
 
 ```{r}
 # plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
-plot(x = Nuset, y = Istarset,
+plot(x = Nuset, y = Istarset3,
      type = 'l', lwd = 2, col = Icol, las = 1,
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
 
 # plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
-plot(x = Nuset, y = Sstarset,
+plot(x = Nuset, y = Sstarset3,
      type = 'l', lwd = 2, col = Scol, las = 1, 
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
 ```
@@ -494,9 +490,6 @@ plot(x = Nuset, y = Sstarset,
 ### Run it with just one change (C > 1, S = 1-I rule)
 
 ```{r}
-# create range of nu values to plot over
-Nuset <- seq(from = 0.0000001, to = 0.999999,length.out = 100)
-
 # make sure parameters are still correct
 m <- 0.0002 
 e_i <- 0.0005 
@@ -509,10 +502,10 @@ H <- 5000
 tset <- seq(from = 0, to = 20*365, by = 1) # ~20 years
 
 # create storage vectors
-Sstarset <- NaN*Nuset
-Istarset <- NaN*Nuset
-Wstarset <- NaN*Nuset
-Cstarset <- NaN*Nuset
+Sstarset4 <- NaN*Nuset
+Istarset4 <- NaN*Nuset
+Wstarset4 <- NaN*Nuset
+Cstarset4 <- NaN*Nuset
 
 
 # get equilibrium values
@@ -561,10 +554,10 @@ for(j in 1:length(Nuset)){
 	}
 	
 	# storing last population size (equilibrium population size) in holding vector
-	Sstarset[j] <- S.simu[length(tset)]
-	Istarset[j] <- I.simu[length(tset)]
-	Wstarset[j] <- W.simu[length(tset)]
-	Cstarset[j] <- C.simu[length(tset)]
+	Sstarset4[j] <- S.simu[length(tset)]
+	Istarset4[j] <- I.simu[length(tset)]
+	Wstarset4[j] <- W.simu[length(tset)]
+	Cstarset4[j] <- C.simu[length(tset)]
 	
 	# print progress
 	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
@@ -572,16 +565,16 @@ for(j in 1:length(Nuset)){
 
 ```
 
-Plot it: `NA` values again
+Plot it: Now it looks like the original simulation? Why is that? Because no substitution? 
 
 ```{r}
 # plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
-plot(x = Nuset, y = Istarset,
+plot(x = Nuset, y = Istarset4,
      type = 'l', lwd = 2, col = Icol, las = 1,
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
 
 # plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
-plot(x = Nuset, y = Sstarset,
+plot(x = Nuset, y = Sstarset4,
      type = 'l', lwd = 2, col = Scol, las = 1, 
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
 ```
@@ -589,9 +582,6 @@ plot(x = Nuset, y = Sstarset,
 ### Run it with just one change (FOI = vW)
 
 ```{r}
-# create range of nu values to plot over
-Nuset <- seq(from = 0.0000001, to = 0.999999,length.out = 100)
-
 # make sure parameters are still correct
 m <- 0.0002 
 e_i <- 0.0005 
@@ -604,10 +594,10 @@ H <- 5000
 tset <- seq(from = 0, to = 20*365, by = 1) # ~20 years
 
 # create storage vectors
-Sstarset <- NaN*Nuset
-Istarset <- NaN*Nuset
-Wstarset <- NaN*Nuset
-Cstarset <- NaN*Nuset
+Sstarset5 <- NaN*Nuset
+Istarset5 <- NaN*Nuset
+Wstarset5 <- NaN*Nuset
+Cstarset5 <- NaN*Nuset
 
 
 # get equilibrium values
@@ -656,10 +646,10 @@ for(j in 1:length(Nuset)){
 	}
 	
 	# storing last population size (equilibrium population size) in holding vector
-	Sstarset[j] <- S.simu[length(tset)]
-	Istarset[j] <- I.simu[length(tset)]
-	Wstarset[j] <- W.simu[length(tset)]
-	Cstarset[j] <- C.simu[length(tset)]
+	Sstarset5[j] <- S.simu[length(tset)]
+	Istarset5[j] <- I.simu[length(tset)]
+	Wstarset5[j] <- W.simu[length(tset)]
+	Cstarset5[j] <- C.simu[length(tset)]
 	
 	# print progress
 	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
@@ -667,16 +657,16 @@ for(j in 1:length(Nuset)){
 
 ```
 
-Plot it: see there's no stochasticity but I* values still seem really low
+Plot it
 
 ```{r}
 # plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
-plot(x = Nuset, y = Istarset,
+plot(x = Nuset, y = Istarset5,
      type = 'l', lwd = 2, col = Icol, las = 1,
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
 
 # plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
-plot(x = Nuset, y = Sstarset,
+plot(x = Nuset, y = Sstarset5,
      type = 'l', lwd = 2, col = Scol, las = 1, 
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
 ```
@@ -686,9 +676,6 @@ plot(x = Nuset, y = Sstarset,
 Now I'll start building off of the one alteration that didn't result in `NA` values (FOI = vW) by adding in one change at a time to look at each one's effect.
 
 ```{r}
-# create range of nu values to plot over
-Nuset <- seq(from = 0.0000001, to = 0.999999,length.out = 100)
-
 # make sure parameters are still correct
 m <- 0.0002 
 e_i <- 0.0005 
@@ -701,10 +688,10 @@ H <- 5000
 tset <- seq(from = 0, to = 20*365, by = 1) # ~20 years
 
 # create storage vectors
-Sstarset <- NaN*Nuset
-Istarset <- NaN*Nuset
-Wstarset <- NaN*Nuset
-Cstarset <- NaN*Nuset
+Sstarset6 <- NaN*Nuset
+Istarset6 <- NaN*Nuset
+Wstarset6 <- NaN*Nuset
+Cstarset6 <- NaN*Nuset
 
 
 # get equilibrium values
@@ -753,10 +740,10 @@ for(j in 1:length(Nuset)){
 	}
 	
 	# storing last population size (equilibrium population size) in holding vector
-	Sstarset[j] <- S.simu[length(tset)]
-	Istarset[j] <- I.simu[length(tset)]
-	Wstarset[j] <- W.simu[length(tset)]
-	Cstarset[j] <- C.simu[length(tset)]
+	Sstarset6[j] <- S.simu[length(tset)]
+	Istarset6[j] <- I.simu[length(tset)]
+	Wstarset6[j] <- W.simu[length(tset)]
+	Cstarset6[j] <- C.simu[length(tset)]
 	
 	# print progress
 	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
@@ -764,16 +751,16 @@ for(j in 1:length(Nuset)){
 
 ```
 
-Plot it: no clear difference here
+Plot it
 
 ```{r}
 # plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
-plot(x = Nuset, y = Istarset,
+plot(x = Nuset, y = Istarset6,
      type = 'l', lwd = 2, col = Icol, las = 1,
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
 
 # plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
-plot(x = Nuset, y = Sstarset,
+plot(x = Nuset, y = Sstarset6,
      type = 'l', lwd = 2, col = Scol, las = 1, 
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
 ```
@@ -783,9 +770,6 @@ plot(x = Nuset, y = Sstarset,
 Note the C > 1 alteration is not in effect
 
 ```{r}
-# create range of nu values to plot over
-Nuset <- seq(from = 0.0000001, to = 0.999999,length.out = 100)
-
 # make sure parameters are still correct
 m <- 0.0002 
 e_i <- 0.0005 
@@ -798,10 +782,10 @@ H <- 5000
 tset <- seq(from = 0, to = 20*365, by = 1) # ~20 years
 
 # create storage vectors
-Sstarset <- NaN*Nuset
-Istarset <- NaN*Nuset
-Wstarset <- NaN*Nuset
-Cstarset <- NaN*Nuset
+Sstarset7 <- NaN*Nuset
+Istarset7 <- NaN*Nuset
+Wstarset7 <- NaN*Nuset
+Cstarset7 <- NaN*Nuset
 
 
 # get equilibrium values
@@ -850,10 +834,10 @@ for(j in 1:length(Nuset)){
 	}
 	
 	# storing last population size (equilibrium population size) in holding vector
-	Sstarset[j] <- S.simu[length(tset)]
-	Istarset[j] <- I.simu[length(tset)]
-	Wstarset[j] <- W.simu[length(tset)]
-	Cstarset[j] <- C.simu[length(tset)]
+	Sstarset7[j] <- S.simu[length(tset)]
+	Istarset7[j] <- I.simu[length(tset)]
+	Wstarset7[j] <- W.simu[length(tset)]
+	Cstarset7[j] <- C.simu[length(tset)]
 	
 	# print progress
 	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
@@ -861,16 +845,16 @@ for(j in 1:length(Nuset)){
 
 ```
 
-Plot it: see there's more stochasticity, but only in I and still with what seems like too low values for I*
+Plot it
 
 ```{r}
 # plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
-plot(x = Nuset, y = Istarset,
+plot(x = Nuset, y = Istarset7,
      type = 'l', lwd = 2, col = Icol, las = 1,
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
 
 # plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
-plot(x = Nuset, y = Sstarset,
+plot(x = Nuset, y = Sstarset7,
      type = 'l', lwd = 2, col = Scol, las = 1, 
      xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
 ```
