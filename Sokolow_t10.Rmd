@@ -1,0 +1,1731 @@
+---
+title: "Sokolow et al. SI Model: t = 10 years"
+author: "Julianna Renzi"
+date: "2/12/2021"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    theme: cerulean
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(here)
+require(scales) # for transparent lines
+```
+
+# The model
+
+Three core differential equations:
+
+\begin{align}
+\frac{d S}{dt} &= m (S + I) (1 - S - I) - e_s S - \nu W S \\
+\newline
+\frac{d I}{dt} &= \nu W S - e_i I
+\newline
+\newline
+\frac{d W}{dt} &= \lambda I + f(W)
+\newline
+\end{align}
+
+Where $f(W) = -d_w W$ : 
+
+\begin{align}
+\frac{d I}{dt} &= \frac{\nu \lambda}{d_w} I (C - I) - e_i I \\
+\newline
+\frac{d C}{dt} &= m C (1 - C) - e_s C + e_s I - e_i I
+\end{align}
+
+
+**Where variables are (quoted from Sokolow et al.):**
+
+- $W$ = free-living pathogen population
+- $S$ = susceptible coral patches (fraction out of a constant total number of patches in the network [susceptible + infected + empty])
+- $I$ = infected coral patches (fraction out of a constant total number of patches in the network [susceptible + infected + empty])
+- $C$ = colonized coral patches (fraction), where $C = S + I$
+
+**Where parameters are (quoted from Table 1 and Table S1.1, Sokolow et al.):**
+
+- $m$ = **colonization/connectivity term** encompassing coral fecundity within a patch (propagule generation) as well as propagule dispersal, settlement, and post-settlement survival. Set at 0.0002, which is equivalent to one complete colonization every ~15 years on average, which they think is reasonable plus or minus one order of magnitude depending on the species involved (Connell, Hughes, and Wallace, 1997 found that on average there was 17 years between periods of low and high coral recruitment after disturbance, corresponding to the presumed period required to return the habitat to its former favorable conditions)
+- $e_s$ = **local extinction rates of susceptible (healthy) coral patches.** Set a 0.00001, which is equivalent to one extinction event in one healthy patch every ~300 years on average. The actual value is unknown but at equilibrium it's though that most available patches will be colonized by coral and will persist; this value allows an equilibrium saturation at ~95% of patches
+- $e_i$ = **local extinction rates of infected coral patches** (it's assumed that $e_s$ < $e_i$). Set at 0.0005, which is equivalent to one extinction event (one diseases patch goes extinct) every ~5 years on average. $e_i$ likely changes significantly with disease. White plagues type II has a high lesion expansion rate, is though to be locally contagious, and is commonly lethal to host colonies within days to weeks so it is plausible that local patches of reef containing 10-1000 individuals could be driven to local extinction within several years
+- $\nu$ = **transmission efficiency term** that represents the probability that a free-living pathogen will invade when it comes into contact with a susceptible patch of coral hosts, causing a local disease outbreak within a patch. Transmission probability is set at 0.00001, which is thought to reflect the low $\nu$ in the environment (due to strong coral immunological defense, large travel distances, etc.), although it is very difficult to measure directly. Note that the **force of infection** is calculated as $e^{- \nu W}$
+- $\lambda$ = **rate at which infected hosts shed pathogens** into the environment or free-living pool. Set at 100, which is equivalent to an infected patch giving out ~100 viable infectious particles that could go out and infect new patches. This value was arbitrarily chosen, but biologically plausible as it encompasses multiplication rates of pathogen particles within a host and release of infectious particles upon host mortality or partial mortality
+- $f(W)$ = **function governing the population dynamics of the free living pathogens** (in the simplest case explored, free-living particles undergo exponential decay where $f(W) = -d_w W$ with $\frac{1}{d_w}$ equal to average time that an infectious particle exists in the living environment). This simple case was also described analytically by a mathematical stability analysis
+- $d_w$ = **average lifespan of an infectious particle** ($d_w$ = 0.01 = ~100 days; informed by (Anderson & May, 1981))
+
+
+![Figure 2 from Sokolow et al.: Schematic of the numerical model showing state variables and parameters](sokolow_et_al_figure2.jpg)
+
+# Initial simulations
+
+1. Set parameters and initial conditions 
+
+```{r, message = FALSE, warning = FALSE}
+# parameters
+m <- 0.0002 # colonization term; varied from 0.00008 to 0.002
+e_i <- 0.0005 # local extinction rates of infected coral patches; varied from 0.0001 to 0.005
+e_s <- 0.00001 # local extinction rates of susceptible patches
+d_w <- 0.01 # average lifespan of an infectious particle (100 days)
+nu <- 0.00001 # transmission efficiency (i.e. pathogen will cause disease)
+lambda <- 100 # rate at which hosts shed pathogens into the environment
+H <- 5000 # total number of patches in the metapopulation
+
+# Initial conditions
+C0 <-  0.90 # initial percent colonized patches
+S0 <-  0.90 # initial percent susceptible patches
+I0 <- 0.0 # initial fraction of infected patches
+W0 <- 100 # initial number of free living infectious particles
+
+```
+
+2. Create holding and time vectors with initial conditions
+
+```{r}
+tset <- seq(from = 0, to = 10*365, by = 1) # ~50 years
+S.simu1 <- NaN*tset
+  S.simu1[1] <- S0
+I.simu1 <- NaN*tset
+  I.simu1[1] <- I0
+W.simu1 <- NaN*tset
+  W.simu1[1] <- W0
+C.simu1 <- NaN*tset
+  C.simu1[1] <- C0
+  
+```
+
+3. Create sub-functions
+
+```{r}
+# determines force of infection
+foi <- function(nu, W) {
+  return(1 - exp(-nu*W))
+}
+
+# creates demographic stochasticity for coral patches (that are fractions)
+newfraction <- function(x) {
+  n <- rpois(n = 1, lambda = H*x) # H is the total number of patches in the metapopulation (set to 5,000 for their simulations)
+  # this takes a single (n=1) random draw from a poisson distribution with a mean and variance lambda (the fraction of patches occupied at the previous step)
+  new_x <- min(n/H, 1)
+  ifelse(n < 3, 
+         return(new_x),
+                return(x)) # when the population is small (fewer than three patches)
+}
+  
+# stochasticity for the pathogen for when it has fewer than three pathogen particles
+new <- function(new_W) {
+  ifelse(new_W < 3,
+         return(rpois(n = 1, lambda = new_W)), 
+                return(new_W))
+}
+
+```
+
+
+4. Simulate the model
+
+```{r}
+
+#n u <- 0.000001299999 # 0.000001299998 overshoots--this value is as close without going over
+
+# nu <- 0.000140 # 0.000141 breaks it
+
+for(i in 2:length(tset)){
+  # calculate the change in time
+  dt <- tset[i] - tset[i-1]
+  
+  # store temporary variables
+  S <- S.simu1[i-1]
+  I <- I.simu1[i-1]
+  W <- W.simu1[i-1]
+  C <- C.simu1[i-1]
+  
+  # calculate change in state variables
+  dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+  dI <- ( nu*W*S - (e_i*I) )*dt
+  dW <- ( lambda*I - (d_w*W) )*dt
+  dC <- (m*C*(1-C) - e_s*C + e_s*I - e_i*I)
+  
+  # calculate add change to previous time step
+  # and store in the holding vector
+  S.simu1[i] <- newfraction(S.simu1[i-1] + dS)
+  I.simu1[i] <- newfraction(I.simu1[i-1] + dI)
+  W.simu1[i] <- new(W.simu1[i-1] + dW)
+  C.simu1[i] <- C.simu1[i-1] + (S.simu1[i]-S.simu1[i-1]) + (I.simu1[i]-I.simu1[i-1]) # I made this up--I think it should be the previous C plus the change in S and the change in I since C = S + I? Alternatively, use the supplemental equation for dC/dt (although when I tried it that didn't work..)
+  
+}
+```
+
+4. Plot results as a time series
+
+```{r}
+# store colors for consistency
+Scol <- "#40d3bb"
+Icol <- "#b64709"
+Ccol <- "#fcd300"
+Wcol <- "#3d7dc5"
+
+```
+
+```{r}
+# plot fraction susceptible against time (tset) for the first 12 years (to match figure 6)
+plot(x = tset[1:4380], y = S.simu1[1:4380],
+     type = 'l', las = 1, lwd = 2, col = Scol,
+     xlab = 'Time', ylab = 'Fraction of coral patches',
+     ylim = c(0, 1))
+
+# plot fraction of patches colonized against time (tset)
+lines(x = tset[1:4380], y = C.simu1[1:4380],
+      lwd = 2, col = Ccol)
+
+# plot fraction infected against time (tset)
+lines(x = tset[1:4380], y = I.simu1[1:4380],
+      lwd = 2, col = Icol)
+
+# abline(v = 365, lty = 2) # year 1
+abline(v = tset[which(I.simu1 == max(I.simu1))], lty = 2) # line at maximum (within first year (day = 269)), where susceptible has dropped to 0.007 (0.7%)
+
+
+# add a legend
+legend(x = 1000, y = 0.9, 
+       lwd = 2,
+       legend = c('Susceptible', 'Infected', 'Colonized'),
+       col = c(Scol, Icol, Ccol))
+```
+
+# Bifurcation diagrams
+
+## Wrt nu (transmission efficiency)
+
+We'd expect this to increase with temperature or coralliovre interactions. 
+
+### How I'd run it if I hadn't seen their code:
+
+```{r}
+# create range of nu values to plot over (0.000001299999 picked as the first point at which corals begin getting infected)
+Nuset <- seq(from = 0, to = 0.000140, length.out = 50)
+# or 0.000001299999
+
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+# create storage vectors
+Sstarset1 <- NaN*Nuset
+Istarset1 <- NaN*Nuset
+Wstarset1 <- NaN*Nuset
+Cstarset1 <- NaN*Nuset
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt 
+    dW <- ( lambda*I - (d_w*W) )*dt # note f(W) = d_w*W in this simple case
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- S.simu[i-1] + dS
+    I.simu[i] <- I.simu[i-1] + dI
+    W.simu[i] <- W.simu[i-1] + dW
+    C.simu[i] <- S.simu[i] + I.simu[i]
+
+    
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset1[j] <- S.simu[length(tset)]
+	Istarset1[j] <- I.simu[length(tset)]
+	Wstarset1[j] <- W.simu[length(tset)]
+	Cstarset1[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+The plots are now showing up (yay!) but the plot of I* looks backwards to how it should be..
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset1,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# for S
+plot(x = Nuset, y = Sstarset1,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*',
+     ylim = c(0, 0.1))
+
+# for W
+plot(x = Nuset, y = Wstarset1,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+
+
+## Try re-doing it with the modifications they used in their code:
+
+In their code they made some changes that I didn't see explained fully in their paper (although I might just not have understood). They:
+
+1. Create a newfraction() function that "implements demographic stochasticity" when there are only a few coral patches (fewer than 3). In newfraction() they take the number of Susceptible/Infected patches and generate a random number from a Poisson distribution with a mean/variance equal to the number of patches that are susceptible or infected. They then divide that random number by the total number of available patches and, if it's less than 1 that becomes the S or I. If it is greater than I then S or I is equal to 1. 
+
+2. They implement a new() function for the number of pathogen particles when that number is low (<3 particles). It also uses the function `rpois`, which draws a random number from the Poisson distribution with a mean/variance equal to the number of pathogen particles. 
+
+3. They substitute instances of $\nu W$ for an equation detailing the force of infection "FOI", which is described by the equation $foi = 1 - e^{-\nu W}$. I don't think they mention foi in the paper and I'm not sure how/why it is equal to $\nu W$. In the first appendix they do say that $\nu$ determines "the force of infection, calculated as $e^{-\nu W}$, where $W$ is the number of free-living infectious particles and $\nu$ is a transmission probability. 
+
+4. They have a conditional statement that says if the number of colonized patches, $C$ or $S + I$, is greater than 1, the $S = 1 - I$, which is confusing. How could there be more than 100% of patches colonized and why would that mean that the fraction of susceptible patches is now $1 - I$?
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset2 <- NaN*Nuset
+Istarset2 <- NaN*Nuset
+Wstarset2 <- NaN*Nuset
+Cstarset2 <- NaN*Nuset
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (force*S) )*dt
+    dI <- ( force*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA)
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset2[j] <- S.simu[length(tset)]
+	Istarset2[j] <- I.simu[length(tset)]
+	Wstarset2[j] <- W.simu[length(tset)]
+	Cstarset2[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+Plot it
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset2,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset2,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+# for W
+plot(x = Nuset, y = Wstarset2,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+I'm not sure I understand these plots--why is I* so different than the 3-core-equation simulation and why does S* have no stochasticity like I*?
+
+### Run it with just one change (demographic stochasticity)
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset3 <- NaN*Nuset
+Istarset3 <- NaN*Nuset
+Wstarset3 <- NaN*Nuset
+Cstarset3 <- NaN*Nuset
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    # ifelse(C.simu[i] > 1,
+    #        S.simu[i] <- 1-I.simu[i],
+    #        NA)
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset3[j] <- S.simu[length(tset)]
+	Istarset3[j] <- I.simu[length(tset)]
+	Wstarset3[j] <- W.simu[length(tset)]
+	Cstarset3[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+Plot it
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset3,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset3,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+# for W
+plot(x = Nuset, y = Wstarset3,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+### Run it with just one change (C > 1, S = 1-I rule)
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset4 <- NaN*Nuset
+Istarset4 <- NaN*Nuset
+Wstarset4 <- NaN*Nuset
+Cstarset4 <- NaN*Nuset
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- (S.simu[i-1] + dS)
+    I.simu[i] <- (I.simu[i-1] + dI)
+    W.simu[i] <- (W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA)
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset4[j] <- S.simu[length(tset)]
+	Istarset4[j] <- I.simu[length(tset)]
+	Wstarset4[j] <- W.simu[length(tset)]
+	Cstarset4[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+Plot it: Now it looks like the original simulation? Why is that? Because no substitution? 
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset4,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset4,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+# for W
+plot(x = Nuset, y = Wstarset4,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+### Run it with just one change (FOI = vW)
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset5 <- NaN*Nuset
+Istarset5 <- NaN*Nuset
+Wstarset5 <- NaN*Nuset
+Cstarset5 <- NaN*Nuset
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (force*S) )*dt
+    dI <- ( force*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- (S.simu[i-1] + dS)
+    I.simu[i] <- (I.simu[i-1] + dI)
+    W.simu[i] <- (W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    # ifelse(C.simu[i] > 1,
+    #        S.simu[i] <- 1-I.simu[i],
+    #        NA)
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset5[j] <- S.simu[length(tset)]
+	Istarset5[j] <- I.simu[length(tset)]
+	Wstarset5[j] <- W.simu[length(tset)]
+	Cstarset5[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+Plot it
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset5,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset5,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+# for W
+plot(x = Nuset, y = Wstarset5,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+### Run it with two changes (FOI = vW & C > 1 rule)
+
+Now I'll start building off of the one alteration that didn't result in `NA` values (FOI = vW) by adding in one change at a time to look at each one's effect.
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset6 <- NaN*Nuset
+Istarset6 <- NaN*Nuset
+Wstarset6 <- NaN*Nuset
+Cstarset6 <- NaN*Nuset
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (force*S) )*dt
+    dI <- ( force*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- (S.simu[i-1] + dS)
+    I.simu[i] <- (I.simu[i-1] + dI)
+    W.simu[i] <- (W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+            S.simu[i] <- 1-I.simu[i],
+            NA)
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset6[j] <- S.simu[length(tset)]
+	Istarset6[j] <- I.simu[length(tset)]
+	Wstarset6[j] <- W.simu[length(tset)]
+	Cstarset6[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+Plot it
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset6,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset6,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+# for W
+plot(x = Nuset, y = Wstarset6,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+### Run it with two changes (FOI = vW & stochasticity)
+
+Note the C > 1 alteration is not in effect
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset7 <- NaN*Nuset
+Istarset7 <- NaN*Nuset
+Wstarset7 <- NaN*Nuset
+Cstarset7 <- NaN*Nuset
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (force*S) )*dt
+    dI <- ( force*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    # ifelse(C.simu[i] > 1,
+    #         S.simu[i] <- 1-I.simu[i],
+    #         NA)
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset7[j] <- S.simu[length(tset)]
+	Istarset7[j] <- I.simu[length(tset)]
+	Wstarset7[j] <- W.simu[length(tset)]
+	Cstarset7[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+Plot it
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset7,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset7,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+# for W
+plot(x = Nuset, y = Wstarset7,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+
+## Run multiple simulations to see how stochasticity changes results
+
+Given that FOI = vW doesn't appear to change results, we'll continue with the model that has their changes (C > 1, S = 1 - I & stochasticity) but without the force substitution (that doesn't make sense)
+
+### I drops then increases
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset8 <- NaN*Nuset
+Istarset8 <- NaN*Nuset
+Wstarset8 <- NaN*Nuset
+Cstarset8 <- NaN*Nuset
+
+# Set seed:
+set.seed(04291995)
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA) # this is just saying that C can't be greater than 1 so cap it at 1
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset8[j] <- S.simu[length(tset)]
+	Istarset8[j] <- I.simu[length(tset)]
+	Wstarset8[j] <- W.simu[length(tset)]
+	Cstarset8[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+Plot it
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset8,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset8,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+plot(x = Nuset, y = Wstarset8,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+### I increases rapidly, then more slowly #1
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+# create storage vectors
+Sstarset9 <- NaN*Nuset
+Istarset9 <- NaN*Nuset
+Wstarset9 <- NaN*Nuset
+Cstarset9 <- NaN*Nuset
+
+# Set seed:
+set.seed(3333)
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA) # this is just saying that C can't be greater than 1 so cap it at 1
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset9[j] <- S.simu[length(tset)]
+	Istarset9[j] <- I.simu[length(tset)]
+	Wstarset9[j] <- W.simu[length(tset)]
+	Cstarset9[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+Plot it
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset9,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset9,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+plot(x = Nuset, y = Wstarset9,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+
+## I increases rapidly, then more slowly #2
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset10 <- NaN*Nuset
+Istarset10 <- NaN*Nuset
+Wstarset10 <- NaN*Nuset
+Cstarset10 <- NaN*Nuset
+
+# Set seed:
+set.seed(12444)
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA) # this is just saying that C can't be greater than 1 so cap it at 1
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset10[j] <- S.simu[length(tset)]
+	Istarset10[j] <- I.simu[length(tset)]
+	Wstarset10[j] <- W.simu[length(tset)]
+	Cstarset10[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+
+
+Plot it
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset10,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset10,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+plot(x = Nuset, y = Wstarset10,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+## I drops then increases #2
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+# create storage vectors
+Sstarset11 <- NaN*Nuset
+Istarset11 <- NaN*Nuset
+Wstarset11 <- NaN*Nuset
+Cstarset11 <- NaN*Nuset
+
+# Set seed:
+set.seed(39456)
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA) # this is just saying that C can't be greater than 1 so cap it at 1
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset11[j] <- S.simu[length(tset)]
+	Istarset11[j] <- I.simu[length(tset)]
+	Wstarset11[j] <- W.simu[length(tset)]
+	Cstarset11[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset11,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset11,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+plot(x = Nuset, y = Wstarset11,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+## I drops then increases #3
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset12 <- NaN*Nuset
+Istarset12 <- NaN*Nuset
+Wstarset12 <- NaN*Nuset
+Cstarset12 <- NaN*Nuset
+
+# Set seed:
+set.seed(14)
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA) # this is just saying that C can't be greater than 1 so cap it at 1
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset12[j] <- S.simu[length(tset)]
+	Istarset12[j] <- I.simu[length(tset)]
+	Wstarset12[j] <- W.simu[length(tset)]
+	Cstarset12[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset12,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset12,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+plot(x = Nuset, y = Wstarset12,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+
+## I drops then increases #4
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+
+# create storage vectors
+Sstarset13 <- NaN*Nuset
+Istarset13 <- NaN*Nuset
+Wstarset13 <- NaN*Nuset
+Cstarset13 <- NaN*Nuset
+
+# Set seed:
+set.seed(7301997)
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA) # this is just saying that C can't be greater than 1 so cap it at 1
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset13[j] <- S.simu[length(tset)]
+	Istarset13[j] <- I.simu[length(tset)]
+	Wstarset13[j] <- W.simu[length(tset)]
+	Cstarset13[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset13,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset13,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+plot(x = Nuset, y = Wstarset13,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+## I increases rapidly then more slowly #3
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+# create storage vectors
+Sstarset14 <- NaN*Nuset
+Istarset14 <- NaN*Nuset
+Wstarset14 <- NaN*Nuset
+Cstarset14 <- NaN*Nuset
+
+# Set seed:
+set.seed(1)
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA) # this is just saying that C can't be greater than 1 so cap it at 1
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset14[j] <- S.simu[length(tset)]
+	Istarset14[j] <- I.simu[length(tset)]
+	Wstarset14[j] <- W.simu[length(tset)]
+	Cstarset14[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset14,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset14,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+plot(x = Nuset, y = Wstarset14,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+## I increases rapidly then more slowly #4
+
+```{r}
+# make sure parameters are still correct
+m <- 0.0002 
+e_i <- 0.0005 
+e_s <- 0.00001 
+d_w <- 0.01 
+lambda <- 100 
+H <- 5000 
+
+# create storage vectors
+Sstarset15 <- NaN*Nuset
+Istarset15 <- NaN*Nuset
+Wstarset15 <- NaN*Nuset
+Cstarset15 <- NaN*Nuset
+
+# Set seed:
+set.seed(4578882)
+
+
+# get equilibrium values
+for(j in 1:length(Nuset)){
+  # assign the value of nu
+	nu <- Nuset[j] 
+	
+	# create a holding vector for patch metapopulations
+	# and fill with initial conditions
+	S.simu <- NaN*tset
+	S.simu[1] <- S0  
+	I.simu <- NaN*tset
+	I.simu[1] <- I0
+	W.simu <- NaN*tset 
+	W.simu[1] <- W0
+	C.simu <- NaN*tset
+	C.simu[1] <- C0
+	
+	for(i in 2:length(tset)){
+	  # calculate the change in time
+    dt <- tset[i] - tset[i-1]
+    
+    # store temporary variables
+    S <- S.simu[i-1]
+    I <- I.simu[i-1]
+    W <- W.simu[i-1]
+    C <- C.simu[i-1]
+    # force <- foi(nu = nu, W = W)
+    
+    # calculate change in state variables
+    dS <- ( m*(S + I)*(1 - S - I) - (e_s*S) - (nu*W*S) )*dt
+    dI <- ( nu*W*S - (e_i*I) )*dt
+    dW <- ( lambda*I - (d_w*W) )*dt
+    
+    
+    # calculate add change to previous time step
+    # and store in the holding vector
+    S.simu[i] <- newfraction(S.simu[i-1] + dS)
+    I.simu[i] <- newfraction(I.simu[i-1] + dI)
+    W.simu[i] <- new(W.simu[i-1] + dW)
+    C.simu[i] <- S.simu[i] + I.simu[i]
+    ifelse(C.simu[i] > 1,
+           S.simu[i] <- 1-I.simu[i],
+           NA) # this is just saying that C can't be greater than 1 so cap it at 1
+      
+	}
+	
+	# storing last population size (equilibrium population size) in holding vector
+	Sstarset15[j] <- S.simu[length(tset)]
+	Istarset15[j] <- I.simu[length(tset)]
+	Wstarset15[j] <- W.simu[length(tset)]
+	Cstarset15[j] <- C.simu[length(tset)]
+	
+	# print progress
+	ifelse(j %% 20 == 0, print(paste("Progress: on nu = ", j, sep = "")), NA)
+}
+
+```
+
+```{r}
+# plot stable equilibria of infected (Istarset) against transmission efficiency (nu)
+plot(x = Nuset, y = Istarset15,
+     type = 'l', lwd = 2, col = Icol, las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*')
+
+# plot stable equilibria of prey (Xstarset) against density of alternate prey (Yset)
+plot(x = Nuset, y = Sstarset15,
+     type = 'l', lwd = 2, col = Scol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of susceptible corals, S*')
+
+plot(x = Nuset, y = Wstarset15,
+     type = 'l', lwd = 2, col = Wcol, las = 1, 
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of nubmer of infectious particles, W*')
+```
+
+## Add simulations into one plot
+
+First for `I*`
+
+```{r}
+plot(x = Nuset, y = Istarset15,
+     type = 'l', lwd = 2, col = alpha("gray", 0.5), las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*', ylim = c(0, 0.5))
+  lines(x = Nuset, y = Istarset14,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Istarset13,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Istarset12,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Istarset11,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Istarset10,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Istarset9,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Istarset1,
+        lwd = 2, col = Icol) # add line for no stochasticity
+  
+```
+
+Then for `S*`
+
+```{r}
+plot(x = Nuset, y = Sstarset15,
+     type = 'l', lwd = 2, col = alpha("gray", 0.5), las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of infected corals, I*', ylim = c(0, 0.3))
+  lines(x = Nuset, y = Sstarset14,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Sstarset13,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Sstarset12,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Sstarset11,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Sstarset10,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Sstarset9,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Sstarset1,
+        lwd = 2, col = Scol) # add line for no stochasticity
+  
+```
+
+And a plot for W
+
+```{r}
+plot(x = Nuset, y = Wstarset15,
+     type = 'l', lwd = 2, col = alpha("gray", 0.5), las = 1,
+     xlab = 'Transmission efficiency, nu', ylab = 'Stable equilibria of number of infectious particles, W*', ylim = c(0, 5000))
+  lines(x = Nuset, y = Wstarset14,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Wstarset13,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Wstarset12,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Wstarset11,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Wstarset10,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Wstarset9,
+        lwd = 2, col = alpha("gray", 0.5))
+  lines(x = Nuset, y = Wstarset1,
+        lwd = 2, col = Wcol) # add line for no stochasticity
+  
+```
+
